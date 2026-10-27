@@ -1,34 +1,125 @@
-using System.Drawing.Imaging;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
-using Valve.VR;
 using CefSharp;
 using CefSharp.OffScreen;
-using System.Diagnostics;
-using OpenTK.Windowing.Desktop;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using VrBrowserTestCore.Properties;
-using System.Windows.Forms;
-using System.Linq;
+using CefSharp.Web;
 using Newtonsoft.Json;
-using System.Reflection;
+using Valve.VR;
 
 namespace VrBrowserTestCore
 {
     public partial class Form1 : Form
     {
+        private const string ContainerHtml = @"<!DOCTYPE html>
+<html>
+<head>
+<meta charset=""utf-8"">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent !important;
+  }
+  iframe.vr-tab-frame {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+    margin: 0;
+    padding: 0;
+    background: transparent !important;
+    pointer-events: none;
+  }
+</style>
+<script>
+  window.syncTabs = function(tabs) {
+    const existing = new Map();
+    document.querySelectorAll('iframe.vr-tab-frame').forEach(el => {
+      existing.set(el.id, el);
+    });
+    const validIds = new Set();
+    tabs.forEach((t, index) => {
+      const url = (t.url || '').trim();
+      if (!url) return;
+      const id = 'tab_' + t.id;
+      validIds.add(id);
+      let iframe = existing.get(id);
+      if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.id = id;
+        iframe.name = id;
+        iframe.className = 'vr-tab-frame';
+        iframe.allow = 'autoplay; microphone; camera; encrypted-media; fullscreen';
+        iframe.setAttribute('data-url', url);
+        iframe.src = url;
+        document.body.appendChild(iframe);
+      } else if (iframe.getAttribute('data-url') !== url) {
+        iframe.setAttribute('data-url', url);
+        iframe.src = url;
+      }
+      iframe.style.zIndex = String(index + 1);
+    });
+    existing.forEach((el, id) => {
+      if (!validIds.has(id)) {
+        el.src = 'about:blank';
+        el.remove();
+      }
+    });
+  };
+
+  window.reloadTab = function(tabId, url, index) {
+    const id = 'tab_' + tabId;
+    let iframe = document.getElementById(id);
+    const cleanUrl = (url || '').trim();
+    if (!cleanUrl) {
+      if (iframe) {
+        iframe.src = 'about:blank';
+        iframe.remove();
+      }
+      return;
+    }
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = id;
+      iframe.name = id;
+      iframe.className = 'vr-tab-frame';
+      iframe.allow = 'autoplay; microphone; camera; encrypted-media; fullscreen';
+      document.body.appendChild(iframe);
+    }
+    if (typeof index === 'number') {
+      iframe.style.zIndex = String(index + 1);
+    }
+    iframe.setAttribute('data-url', cleanUrl);
+    iframe.src = cleanUrl;
+  };
+</script>
+</head>
+<body></body>
+</html>";
+
         private AppSettings ThisAppSettings = new();
         readonly static string PathToExe = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "\\";
 
-        // Overlay
+        // Overlay & Direct3D 11 / CEF state
         CVRSystem? VrSystem = null;
-        bool VrStarted = false;
+        volatile bool VrStarted = false;
         uint HmdId;
         ulong OverlayHandle = 0;
-        GameWindow? PreviewGameWindow = null;
 
+        private D3D11OverlayRenderer? _d3dRenderer = null;
+        private ChromiumWebBrowser? _mainBrowser = null;
+        private volatile bool _containerLoaded = false;
+        private bool _isLoadingSettingsUi = false;
 
+        // Maps top-level iframe CEF Identifier -> Tab.Tag so even if a site modifies window.name we still know its Tab
+        private readonly ConcurrentDictionary<string, Guid> _frameIdToTabTag = new();
 
         public Form1()
         {
@@ -37,10 +128,11 @@ namespace VrBrowserTestCore
 
         private void Form1_Shown(object sender, EventArgs e)
         {
+            _isLoadingSettingsUi = true;
             if (File.Exists("AppSettings.json"))
             {
                 string data = File.ReadAllText("AppSettings.json");
-                ThisAppSettings = JsonConvert.DeserializeObject<AppSettings>(data);
+                ThisAppSettings = JsonConvert.DeserializeObject<AppSettings>(data) ?? new AppSettings();
             }
             else
             {
@@ -51,12 +143,15 @@ namespace VrBrowserTestCore
                 ThisAppSettings.Tabs.Add(tab);
             }
 
-            NuCurvature.Value = (decimal)ThisAppSettings.Curvature;
-            NuSize.Value = (decimal)ThisAppSettings.Size;
-            NuOffset.Value = (decimal)ThisAppSettings.Offset;
-            CoColorFormat.SelectedIndex = ThisAppSettings.ColorFormat;
+            NuCurvature.Value = (decimal)Math.Clamp(ThisAppSettings.Curvature, (float)NuCurvature.Minimum, (float)NuCurvature.Maximum);
+            NuSize.Value = (decimal)Math.Clamp(ThisAppSettings.Size, (float)NuSize.Minimum, (float)NuSize.Maximum);
+            NuOffset.Value = (decimal)Math.Clamp(ThisAppSettings.Offset, (float)NuOffset.Minimum, (float)NuOffset.Maximum);
+            CoColorFormat.SelectedIndex = Math.Clamp(ThisAppSettings.ColorFormat, 0, CoColorFormat.Items.Count - 1);
+            CoResolution.SelectedIndex = Math.Clamp(ThisAppSettings.ResolutionIndex, 0, CoResolution.Items.Count - 1);
+            NuFps.Value = Math.Clamp(ThisAppSettings.Fps, (int)NuFps.Minimum, (int)NuFps.Maximum);
             ChMinimizeOnStart.Checked = ThisAppSettings.MinimizeOnStart;
             ChMinimizeToTray.Checked = ThisAppSettings.MinimizeToTray;
+            _isLoadingSettingsUi = false;
 
             if (ThisAppSettings.MinimizeOnStart)
             {
@@ -88,7 +183,10 @@ namespace VrBrowserTestCore
         {
             if (!InitVr(out OverlayHandle))
                 return;
-            InitGL();
+
+            var (width, height) = ThisAppSettings.GetResolution();
+            _d3dRenderer = new D3D11OverlayRenderer(OverlayHandle, width, height, ThisAppSettings.ColorFormat);
+
             TiStartVr.Stop();
 
             var settings = new CefSettings()
@@ -97,77 +195,271 @@ namespace VrBrowserTestCore
                     ["enable-media-stream"] = "1",
                     ["autoplay-policy"] = "no-user-gesture-required",
                     ["enable-audio"] = "1",
+                    ["disable-web-security"] = "1",
+                    ["allow-running-insecure-content"] = "1",
+                    ["disable-site-isolation-trials"] = "1",
+                    ["disable-features"] = "BlockInsecurePrivateNetworkRequests,IsolateOrigins,site-per-process",
+                    ["disable-background-networking"] = "1",
+                    ["disable-component-update"] = "1",
+                    ["disable-sync"] = "1",
                 },
                 WindowlessRenderingEnabled = true,
             };
             settings.CefCommandLineArgs.Remove("mute-audio");
             settings.CachePath = PathToExe + "cefcache\\";
-            if (Directory.Exists(settings.CachePath))
+            try
             {
-                Directory.Delete(settings.CachePath, true);
+                if (Directory.Exists(settings.CachePath))
+                {
+                    Directory.Delete(settings.CachePath, true);
+                }
+                Directory.CreateDirectory(settings.CachePath);
             }
-            Directory.CreateDirectory(settings.CachePath);
+            catch { }
+
             Cef.Initialize(settings);
 
-            foreach (var tab in ThisAppSettings.Tabs)
-            {
-                if (!string.IsNullOrEmpty(tab.Url))
-                {
-                    tab.Browser = new ChromiumWebBrowser(tab.Url)
-                    {
-                        Size = new Size(1920, 1080)
-                    };
+            IBrowserSettings browserSettings = CefSharp.Core.ObjectFactory.CreateBrowserSettings(autoDispose: false);
+            browserSettings.WindowlessFrameRate = Math.Clamp(ThisAppSettings.Fps, 1, 60);
 
-                    tab.Browser.FrameLoadEnd += Browser_FrameLoadEnd;
+            _mainBrowser = new ChromiumWebBrowser(
+                address: "about:blank",
+                browserSettings: browserSettings,
+                requestContext: null,
+                automaticallyCreateBrowser: true,
+                onAfterBrowserCreated: null,
+                useLegacyRenderHandler: false)
+            {
+                Size = new Size(width, height),
+                RenderHandler = _d3dRenderer
+            };
+
+            _mainBrowser.BrowserInitialized += (s, e) =>
+            {
+                _mainBrowser.LoadHtml(ContainerHtml, "https://vrbrowser.local/");
+            };
+            _mainBrowser.FrameLoadStart += Browser_FrameLoadStart;
+            _mainBrowser.FrameLoadEnd += Browser_FrameLoadEnd;
+        }
+
+        private Tab? ResolveTabForFrame(IFrame frame, out IFrame? topSubFrame)
+        {
+            topSubFrame = null;
+            if (frame == null || !frame.IsValid || frame.IsMain)
+                return null;
+
+            IFrame? current = frame;
+            while (current != null && current.IsValid)
+            {
+                var parent = current.Parent;
+                if (parent != null && parent.IsValid && parent.IsMain)
+                {
+                    topSubFrame = current;
+                    break;
                 }
+                current = parent;
             }
 
-            Task t = new(() =>
+            if (topSubFrame == null || !topSubFrame.IsValid)
+                return null;
+
+            string name = topSubFrame.Name ?? "";
+            if (name.StartsWith("tab_", StringComparison.OrdinalIgnoreCase) &&
+                Guid.TryParse(name.AsSpan(4), out Guid parsedGuid))
             {
-                while (true)
-                {
-                    UpdateOverlayWithBrowserContent();
-                }
-            });
-            t.Start();
+                _frameIdToTabTag[topSubFrame.Identifier] = parsedGuid;
+                return GetTabByGuid(parsedGuid);
+            }
+
+            if (_frameIdToTabTag.TryGetValue(topSubFrame.Identifier, out Guid cachedGuid))
+            {
+                return GetTabByGuid(cachedGuid);
+            }
+
+            return null;
+        }
+
+        private void Browser_FrameLoadStart(object? sender, FrameLoadStartEventArgs e)
+        {
+            if (!e.Frame.IsValid || e.Frame.IsMain)
+                return;
+
+            var tab = ResolveTabForFrame(e.Frame, out _);
+            if (tab != null)
+            {
+                ApplyCssAndAudioToFrame(e.Frame, tab);
+            }
         }
 
         private void Browser_FrameLoadEnd(object? sender, FrameLoadEndEventArgs e)
         {
-            foreach (var tab in ThisAppSettings.Tabs)
+            if (!e.Frame.IsValid)
+                return;
+
+            if (e.Frame.IsMain)
             {
-                if (tab.Browser == sender)
+                if (e.Frame.Url != null && e.Frame.Url.StartsWith("https://vrbrowser.local", StringComparison.OrdinalIgnoreCase))
                 {
-                    tab.UrlLoaded = true;
-                    var browserHost = tab.Browser.GetBrowserHost();
-                    browserHost?.SetAudioMuted(!tab.AudioEnabled);
-                    if (!string.IsNullOrEmpty(tab.Css))
+                    _containerLoaded = true;
+                    UpdateBrowserHostMuteState();
+                    SyncTabsToBrowser();
+                }
+                return;
+            }
+
+            var tab = ResolveTabForFrame(e.Frame, out _);
+            if (tab != null)
+            {
+                UpdateBrowserHostMuteState();
+                ApplyCssAndAudioToFrame(e.Frame, tab);
+            }
+        }
+
+        private void SyncTabsToBrowser()
+        {
+            if (!_containerLoaded || _mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
+                return;
+
+            var payload = ThisAppSettings.Tabs.Select(t => new
+            {
+                id = t.Tag.ToString("N"),
+                url = t.Url ?? ""
+            }).ToList();
+
+            string json = JsonConvert.SerializeObject(payload);
+            _mainBrowser.ExecuteScriptAsync($"if (window.syncTabs) window.syncTabs({json});");
+            UpdateBrowserHostMuteState();
+        }
+
+        private void ReloadSingleTabInBrowser(Tab tab)
+        {
+            if (!_containerLoaded || _mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
+                return;
+
+            int index = ThisAppSettings.Tabs.IndexOf(tab);
+            string idJson = JsonConvert.SerializeObject(tab.Tag.ToString("N"));
+            string urlJson = JsonConvert.SerializeObject(tab.Url ?? "");
+            _mainBrowser.ExecuteScriptAsync($"if (window.reloadTab) window.reloadTab({idJson}, {urlJson}, {index});");
+            UpdateBrowserHostMuteState();
+        }
+
+        private void UpdateBrowserHostMuteState()
+        {
+            if (_mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
+                return;
+
+            bool anyAudioEnabled = ThisAppSettings.Tabs.Any(t => t.AudioEnabled && !string.IsNullOrWhiteSpace(t.Url));
+            _mainBrowser.GetBrowserHost()?.SetAudioMuted(!anyAudioEnabled);
+        }
+
+        private void ApplyTabCssAndAudioToAllFrames(Tab tab)
+        {
+            if (_mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
+                return;
+
+            try
+            {
+                var browser = _mainBrowser.GetBrowser();
+                if (browser == null) return;
+
+                var identifiers = browser.GetFrameIdentifiers();
+                foreach (var id in identifiers)
+                {
+                    var frame = browser.GetFrameByIdentifier(id);
+                    if (frame != null && frame.IsValid && !frame.IsMain)
                     {
-                        string script = $@"
-                            (function() {{
-                                var style = document.createElement('style');
-                                style.type = 'text/css';
-                                style.innerHTML = `{tab.Css}`;
-                                document.head.appendChild(style);
-                            }})();
-                        ";
-                        tab.Browser.ExecuteScriptAsync(script);
+                        var ownerTab = ResolveTabForFrame(frame, out _);
+                        if (ownerTab != null && ownerTab.Tag == tab.Tag)
+                        {
+                            ApplyCssAndAudioToFrame(frame, tab);
+                        }
                     }
-                    break;
                 }
             }
+            catch { }
+        }
+
+        private static void ApplyCssAndAudioToFrame(IFrame frame, Tab tab)
+        {
+            if (frame == null || !frame.IsValid)
+                return;
+
+            string cssJson = JsonConvert.SerializeObject(tab.Css ?? "");
+            string mutedBool = (!tab.AudioEnabled).ToString().ToLowerInvariant();
+
+            string script = $@"
+(function(cssText, isMuted) {{
+  try {{
+    var applyStyle = function() {{
+      var root = document.head || document.documentElement;
+      if (!root) return;
+      var styleId = '__vr_overlay_custom_css';
+      var style = document.getElementById(styleId);
+      if (!style) {{
+        style = document.createElement('style');
+        style.id = styleId;
+        style.type = 'text/css';
+        root.appendChild(style);
+      }}
+      if (style.textContent !== cssText) {{
+        style.textContent = cssText;
+      }}
+    }};
+    applyStyle();
+    if (document.readyState === 'loading') {{
+      document.addEventListener('DOMContentLoaded', applyStyle, {{ once: true }});
+    }}
+
+    window.__vrAudioMuted = isMuted;
+    var applyMute = function(rootNode) {{
+      if (!rootNode || !rootNode.querySelectorAll) return;
+      rootNode.querySelectorAll('audio, video').forEach(function(el) {{
+        el.muted = window.__vrAudioMuted;
+      }});
+    }};
+    applyMute(document);
+
+    if (!window.__vrAudioHookInstalled) {{
+      window.__vrAudioHookInstalled = true;
+      var origPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function() {{
+        if (window.__vrAudioMuted) {{
+          this.muted = true;
+        }}
+        return origPlay.apply(this, arguments);
+      }};
+      if (typeof MutationObserver !== 'undefined' && document.documentElement) {{
+        new MutationObserver(function(mutations) {{
+          for (var i = 0; i < mutations.length; i++) {{
+            var added = mutations[i].addedNodes;
+            for (var j = 0; j < added.length; j++) {{
+              var node = added[j];
+              if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {{
+                node.muted = window.__vrAudioMuted;
+              }} else if (node.querySelectorAll) {{
+                applyMute(node);
+              }}
+            }}
+          }}
+        }}).observe(document.documentElement, {{ childList: true, subtree: true }});
+      }}
+    }}
+  }} catch (e) {{}}
+}})({cssJson}, {mutedBool});";
+
+            frame.ExecuteJavaScriptAsync(script);
         }
 
         private bool AssociateOverlayToDevice(ulong overlayHandle, uint deviceIndex)
         {
             HmdMatrix34_t transform = new()
             {
-                m0 = -1,
+                m0 = 1,
                 m1 = 0,
                 m2 = 0,
                 m3 = 0,
                 m4 = 0,
-                m5 = -1,
+                m5 = 1,
                 m6 = 0,
                 m7 = 0,
                 m8 = 0,
@@ -180,121 +472,46 @@ namespace VrBrowserTestCore
             return true;
         }
 
-        private int LoadTextureFromBitmap(Bitmap bitmap)
-        {
-            int textureId = GL.GenTexture();
-            GL.BindTexture(TextureTarget.Texture2D, textureId);
-
-            // Load the image using System.Drawing
-            bitmap.RotateFlip(RotateFlipType.RotateNoneFlipX);
-
-            BitmapData data = bitmap.LockBits(
-                new Rectangle(0, 0, bitmap.Width, bitmap.Height),
-                ImageLockMode.ReadOnly,
-                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-
-            OpenTK.Graphics.OpenGL4.PixelFormat pixelFormat = OpenTK.Graphics.OpenGL4.PixelFormat.Bgra;
-            switch (ThisAppSettings.ColorFormat)
-            {
-                case 1: pixelFormat = OpenTK.Graphics.OpenGL4.PixelFormat.Rgba; break;
-            }
-
-            GL.TexImage2D(TextureTarget.Texture2D,
-                0,
-                PixelInternalFormat.Rgba,
-                data.Width,
-                data.Height,
-                0,
-                pixelFormat,
-                PixelType.UnsignedByte,
-                data.Scan0);
-
-            bitmap.UnlockBits(data);
-            bitmap.Dispose();
-
-            // Set texture parameters (optional)
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
-
-            return textureId;
-        }
-
-        private void ShowFrameFileFromBitmap(Bitmap bitmap)
-        {
-            int textureId = LoadTextureFromBitmap(bitmap);
-
-            Texture_t texture = new()
-            {
-                eColorSpace = EColorSpace.Auto,
-                eType = ETextureType.OpenGL,
-                handle = (IntPtr)textureId
-            };
-            OpenVR.Overlay.SetOverlayTexture(OverlayHandle, ref texture);
-
-
-            GL.BindTexture(TextureTarget.Texture2D, textureId);
-
-            GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
-
-            GL.DeleteTextures(1, ref textureId);
-        }
-
-        private async Task UpdateOverlayWithBrowserContent()
-        {
-            if (!VrStarted) return;
-
-            Bitmap bitmap = new(1920, 1080);
-            foreach (var tab in ThisAppSettings.Tabs)
-            {
-                if (tab.Browser == null || tab.Browser.IsDisposed) continue;
-                if (!tab.UrlLoaded) continue;
-                var screenshot = await tab.Browser.ScreenshotAsync();
-                using (Graphics g = Graphics.FromImage(bitmap))
-                {
-                    g.DrawImage(screenshot, 0, 0, screenshot.Width, screenshot.Height);
-                }
-                screenshot.Dispose();
-            }
-
-            try
-            {
-                this.Invoke(new Action(() =>
-                {
-                    ShowFrameFileFromBitmap(bitmap);
-                }));
-            }
-            catch { }
-            bitmap.Dispose();
-
-            await Task.Delay(16);
-        }
-
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
             if (VrStarted)
             {
                 VrStarted = false;
-                Thread.Sleep(1000);
-                OpenVR.Overlay.HideOverlay(OverlayHandle);
-                OpenVR.Overlay.DestroyOverlay(OverlayHandle);
+                OpenVR.Overlay?.HideOverlay(OverlayHandle);
+                OpenVR.Overlay?.DestroyOverlay(OverlayHandle);
                 OpenVR.Shutdown();
             }
-            Cef.Shutdown();
-            if (PreviewGameWindow != null)
+
+            if (_mainBrowser != null)
             {
-                PreviewGameWindow.Close();
-                PreviewGameWindow.Dispose();
+                _mainBrowser.FrameLoadStart -= Browser_FrameLoadStart;
+                _mainBrowser.FrameLoadEnd -= Browser_FrameLoadEnd;
+                _mainBrowser.RenderHandler = null;
+                _mainBrowser.Dispose();
+                _mainBrowser = null;
             }
+
+            if (Cef.IsInitialized == true)
+            {
+                Cef.Shutdown();
+            }
+
+            _d3dRenderer?.Dispose();
+            _d3dRenderer = null;
+
             NoMain.Visible = false;
             NoMain.Dispose();
         }
 
-
-
         static bool IsProcessRunning(string processName)
         {
             Process[] processes = Process.GetProcessesByName(processName);
-            return processes.Length > 0;
+            bool running = processes.Length > 0;
+            foreach (var p in processes)
+            {
+                p.Dispose();
+            }
+            return running;
         }
 
         bool InitVr(out ulong overlayHandle)
@@ -314,7 +531,6 @@ namespace VrBrowserTestCore
                 VrSystem.GetSortedTrackedDeviceIndicesOfClass(ETrackedDeviceClass.HMD, indexes, 0);
                 HmdId = indexes[0];
 
-                // Init VR
                 var overlayErr = EVROverlayError.None;
                 overlayErr = OpenVR.Overlay.CreateOverlay("browser", "browser", ref overlayHandle);
                 if (overlayErr != EVROverlayError.None)
@@ -339,6 +555,8 @@ namespace VrBrowserTestCore
                 OpenVR.Overlay.SetOverlayAlpha(overlayHandle, 1);
 
                 OpenVR.Overlay.ShowOverlay(overlayHandle);
+
+                // Standard DirectX top-left UV bounds (0..1)
                 VRTextureBounds_t bounds;
                 bounds.uMin = 0;
                 bounds.uMax = 1;
@@ -349,11 +567,12 @@ namespace VrBrowserTestCore
                 AssociateOverlayToDevice(overlayHandle, HmdId);
                 VrStarted = true;
 
-                Task t = new(() =>
+                Thread vrEventThread = new(CheckingForExitSteamVr)
                 {
-                    CheckingForExitSteamVr();
-                });
-                t.Start();
+                    IsBackground = true,
+                    Name = "SteamVrEventPollThread"
+                };
+                vrEventThread.Start();
 
                 return true;
             }
@@ -366,81 +585,99 @@ namespace VrBrowserTestCore
 
         private void CheckingForExitSteamVr()
         {
+            uint eventSize = (uint)Marshal.SizeOf<VREvent_t>();
+            VREvent_t vrEvent = default;
             while (VrStarted)
             {
-                var vrEvents = new List<VREvent_t>();
-                var vrEvent = new VREvent_t();
-                uint eventSize = (uint)Marshal.SizeOf(vrEvent);
                 try
                 {
-                    while (OpenVR.System.PollNextEvent(ref vrEvent, eventSize))
+                    while (OpenVR.System != null && OpenVR.System.PollNextEvent(ref vrEvent, eventSize))
                     {
-                        vrEvents.Add(vrEvent);
+                        if ((EVREventType)vrEvent.eventType == EVREventType.VREvent_Quit)
+                        {
+                            OpenVR.System.AcknowledgeQuit_Exiting();
+                            VrStarted = false;
+                            BeginInvoke(new Action(Close));
+                            return;
+                        }
                     }
                 }
                 catch
                 {
                 }
-
-                foreach (var e in vrEvents)
-                {
-                    if ((EVREventType)e.eventType == EVREventType.VREvent_Quit)
-                    {
-                        OpenVR.System.AcknowledgeQuit_Exiting();
-                        VrStarted = false;
-                        this.Invoke(new Action(() =>
-                        {
-                            this.Close();
-                        }));
-                    }
-                }
                 Thread.Sleep(100);
             }
         }
 
-        void InitGL()
-        {
-            var location = new OpenTK.Mathematics.Vector2i(0, -10000);
-
-            GameWindowSettings gwSettings = new() { };
-            NativeWindowSettings nwSettings = new()
-            {
-                Size = new OpenTK.Mathematics.Vector2i(1, 1),
-                Title = "VR Browser Preview",
-                WindowBorder = OpenTK.Windowing.Common.WindowBorder.Hidden,
-                Location = location,
-            };
-            PreviewGameWindow = new GameWindow(gwSettings, nwSettings) { IsVisible = false };
-
-            GL.ClearColor(new Color4(0.1f, 0, 0, 0.5f));
-        }
-
-
         private void NuSize_ValueChanged(object sender, EventArgs e)
         {
+            if (_isLoadingSettingsUi) return;
             ThisAppSettings.Size = (float)NuSize.Value;
         }
 
         private void NuOffset_ValueChanged(object sender, EventArgs e)
         {
+            if (_isLoadingSettingsUi) return;
             ThisAppSettings.Offset = (float)NuOffset.Value;
         }
 
         private void NuCurvature_ValueChanged(object sender, EventArgs e)
         {
+            if (_isLoadingSettingsUi) return;
             ThisAppSettings.Curvature = (float)NuCurvature.Value;
         }
 
         private void CoColorFormat_SelectedIndexChanged(object sender, EventArgs e)
         {
+            if (_isLoadingSettingsUi) return;
             ThisAppSettings.ColorFormat = CoColorFormat.SelectedIndex;
             SaveAppSettings();
+            ApplyResolutionAndColorFormat();
         }
 
+        private void CoResolution_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (_isLoadingSettingsUi) return;
+            ThisAppSettings.ResolutionIndex = CoResolution.SelectedIndex;
+            SaveAppSettings();
+            ApplyResolutionAndColorFormat();
+        }
 
+        private void NuFps_ValueChanged(object sender, EventArgs e)
+        {
+            if (_isLoadingSettingsUi) return;
+            ThisAppSettings.Fps = (int)NuFps.Value;
+            SaveAppSettings();
+            if (_mainBrowser != null && !_mainBrowser.IsDisposed && _mainBrowser.IsBrowserInitialized)
+            {
+                try
+                {
+                    var host = _mainBrowser.GetBrowserHost();
+                    if (host != null)
+                    {
+                        host.WindowlessFrameRate = Math.Clamp(ThisAppSettings.Fps, 1, 60);
+                    }
+                }
+                catch { }
+            }
+        }
 
+        private void ApplyResolutionAndColorFormat()
+        {
+            if (!VrStarted || _d3dRenderer == null) return;
 
+            var (width, height) = ThisAppSettings.GetResolution();
+            _d3dRenderer.SetConfiguration(width, height, ThisAppSettings.ColorFormat);
 
+            if (_mainBrowser != null && !_mainBrowser.IsDisposed)
+            {
+                _mainBrowser.Size = new Size(width, height);
+                if (_mainBrowser.IsBrowserInitialized)
+                {
+                    _mainBrowser.GetBrowserHost()?.Invalidate(PaintElementType.View);
+                }
+            }
+        }
 
         private void LoadPages()
         {
@@ -448,7 +685,6 @@ namespace VrBrowserTestCore
             {
                 if (tab.Tag != new Guid())
                 {
-
                     tabControl1.TabPages.Add("New");
                     var tabPage = tabControl1.TabPages[^1];
 
@@ -461,11 +697,10 @@ namespace VrBrowserTestCore
                         var clonedControl = CloneControl(c, (Guid)tabPage.Tag);
                         tabPage.Controls.Add(clonedControl);
                     }
-
                 }
 
-                var tabPageForNaming = (FindControlByName(this, nameof(TaBrowser), tab.Tag) as TabPage);
-                if (tab.Url.Contains("//"))
+                var tabPageForNaming = FindControlByName(this, nameof(TaBrowser), tab.Tag) as TabPage;
+                if (tabPageForNaming != null && tab.Url.Contains("//"))
                 {
                     string name = tab.Url[(tab.Url.IndexOf("//") + 2)..];
                     if (name.Contains('/'))
@@ -475,9 +710,12 @@ namespace VrBrowserTestCore
                     tabPageForNaming.Text = name;
                 }
 
-                (FindControlByName(this, nameof(TeUrl), tab.Tag) as TextBox).Text = tab.Url;
-                (FindControlByName(this, nameof(RiCss), tab.Tag) as RichTextBox).Text = tab.Css;
-                (FindControlByName(this, nameof(ChAudioEnabled), tab.Tag) as CheckBox).Checked = tab.AudioEnabled;
+                if (FindControlByName(this, nameof(TeUrl), tab.Tag) is TextBox teUrl)
+                    teUrl.Text = tab.Url;
+                if (FindControlByName(this, nameof(RiCss), tab.Tag) is RichTextBox riCss)
+                    riCss.Text = tab.Css;
+                if (FindControlByName(this, nameof(ChAudioEnabled), tab.Tag) is CheckBox chAudio)
+                    chAudio.Checked = tab.AudioEnabled;
             }
         }
 
@@ -491,7 +729,7 @@ namespace VrBrowserTestCore
         {
             foreach (var tab in ThisAppSettings.Tabs)
             {
-                if (tab.Tag.ToString() == tag.ToString())
+                if (tab.Tag == tag)
                     return tab;
             }
             return null;
@@ -538,7 +776,7 @@ namespace VrBrowserTestCore
         private Control CloneControl(Control original, Guid tag)
         {
             var type = original.GetType();
-            var clonedControl = Activator.CreateInstance(type) as Control;
+            var clonedControl = (Control)Activator.CreateInstance(type)!;
 
             clonedControl.Size = original.Size;
             clonedControl.Location = original.Location;
@@ -557,12 +795,12 @@ namespace VrBrowserTestCore
                 }
             }
 
-            if (clonedControl is RichTextBox clonedTichTextBox)
+            if (clonedControl is RichTextBox clonedRichTextBox)
             {
-                clonedTichTextBox.Text = "";
-                if (clonedTichTextBox.Name.StartsWith("RiCss"))
+                clonedRichTextBox.Text = "";
+                if (clonedRichTextBox.Name.StartsWith("RiCss"))
                 {
-                    clonedTichTextBox.TextChanged += RichTextBoxCss_TextChanged;
+                    clonedRichTextBox.TextChanged += RichTextBoxCss_TextChanged;
                 }
             }
 
@@ -576,8 +814,8 @@ namespace VrBrowserTestCore
 
             if (original is Button button && clonedControl is Button clonedBtn)
             {
-                ((Button)clonedControl).ImageList = button.ImageList;
-                ((Button)clonedControl).ImageIndex = button.ImageIndex;
+                clonedBtn.ImageList = button.ImageList;
+                clonedBtn.ImageIndex = button.ImageIndex;
                 if (clonedBtn.Name.StartsWith("BuTabDelete"))
                 {
                     clonedBtn.Click += BuPageDelete_Click;
@@ -602,37 +840,33 @@ namespace VrBrowserTestCore
 
         private void CheckBoxAudioEnabled_CheckedChanged(object? sender, EventArgs e)
         {
-            if (sender == null) return;
-            var control = (CheckBox)sender;
+            if (sender is not CheckBox control || control.Tag == null) return;
 
-            var tab = GetTabByGuid(Guid.Parse(control.Tag.ToString()));
+            var tab = GetTabByGuid(Guid.Parse(control.Tag.ToString()!));
             if (tab == null) return;
 
             tab.AudioEnabled = control.Checked;
-            if (tab.Browser != null && !tab.Browser.IsDisposed)
-            {
-                tab.Browser.GetBrowserHost().SetAudioMuted(!tab.AudioEnabled);
-            }
+            UpdateBrowserHostMuteState();
+            ApplyTabCssAndAudioToAllFrames(tab);
             SaveAppSettings();
         }
 
         private void RichTextBoxCss_TextChanged(object? sender, EventArgs e)
         {
-            if (sender == null) return;
-            var control = (RichTextBox)sender;
+            if (sender is not RichTextBox control || control.Tag == null) return;
 
-            var tab = GetTabByGuid(Guid.Parse(control.Tag.ToString()));
+            var tab = GetTabByGuid(Guid.Parse(control.Tag.ToString()!));
             if (tab == null) return;
 
             tab.Css = control.Text;
+            ApplyTabCssAndAudioToAllFrames(tab);
         }
 
         private void TextBoxUrl_TextChanged(object? sender, EventArgs e)
         {
-            if (sender == null) return;
-            var control = (TextBox)sender;
+            if (sender is not TextBox control || control.Tag == null) return;
 
-            var tab = GetTabByGuid(Guid.Parse(control.Tag.ToString()));
+            var tab = GetTabByGuid(Guid.Parse(control.Tag.ToString()!));
             if (tab == null) return;
 
             tab.Url = control.Text;
@@ -640,10 +874,9 @@ namespace VrBrowserTestCore
 
         private void BuReload_Click(object? sender, EventArgs e)
         {
-            if (sender == null) return;
-            var control = (Button)sender;
+            if (sender is not Button control || control.Tag == null) return;
 
-            var tab = GetTabByGuid(Guid.Parse(control.Tag.ToString()));
+            var tab = GetTabByGuid(Guid.Parse(control.Tag.ToString()!));
             if (tab == null) return;
 
             var tabPage = FindControlByName(this, "TaBrowser", tab.Tag);
@@ -660,35 +893,21 @@ namespace VrBrowserTestCore
             }
 
             SaveAppSettings();
-
-            if (!string.IsNullOrEmpty(tab.Url))
-            {
-                if (tab.Browser == null)
-                {
-                    tab.Browser = new ChromiumWebBrowser()
-                    {
-                        Size = new Size(1920, 1080)
-                    };
-                    tab.Browser.FrameLoadEnd += Browser_FrameLoadEnd;
-                }
-
-                tab.Browser.LoadUrl(tab.Url);
-            }
+            ReloadSingleTabInBrowser(tab);
         }
 
         private void BuPageDelete_Click(object? sender, EventArgs e)
         {
-            if (sender == null) return;
-            var control = (Button)sender;
+            if (sender is not Button control || control.Tag == null) return;
 
             if (MessageBox.Show("Do you want to delete tab?", "Deleting tab", MessageBoxButtons.YesNo) == DialogResult.No)
             {
                 return;
             }
 
-            var tab = GetTabByGuid((Guid)control.Tag);
+            var tab = GetTabByGuid(Guid.Parse(control.Tag.ToString()!));
             if (tab == null) return;
-            tab.Browser?.Dispose();
+
             ThisAppSettings.Tabs.Remove(tab);
 
             TabPage? toDelete = null;
@@ -701,9 +920,13 @@ namespace VrBrowserTestCore
                 }
             }
 
-            tabControl1.TabPages.Remove(toDelete);
+            if (toDelete != null)
+            {
+                tabControl1.TabPages.Remove(toDelete);
+            }
 
             SaveAppSettings();
+            SyncTabsToBrowser();
         }
 
         private void BuApplyVrSettings_Click(object sender, EventArgs e)
@@ -721,12 +944,14 @@ namespace VrBrowserTestCore
 
         private void ChMinimizeOnStart_CheckedChanged(object sender, EventArgs e)
         {
+            if (_isLoadingSettingsUi) return;
             ThisAppSettings.MinimizeOnStart = ChMinimizeOnStart.Checked;
             SaveAppSettings();
         }
 
         private void ChMinimizeToTray_CheckedChanged(object sender, EventArgs e)
         {
+            if (_isLoadingSettingsUi) return;
             ThisAppSettings.MinimizeToTray = ChMinimizeToTray.Checked;
             SaveAppSettings();
         }

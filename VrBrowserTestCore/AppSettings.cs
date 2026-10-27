@@ -1,11 +1,5 @@
-﻿using CefSharp.OffScreen;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.Serialization;
-using System.Text;
-using System.Text.Json.Serialization;
-using System.Threading.Tasks;
 
 namespace VrBrowserTestCore
 {
@@ -16,10 +10,26 @@ namespace VrBrowserTestCore
         public float Curvature { get; set; } = 0.1f;
         public int ColorFormat { get; set; } = 0;
 
+        // 0 = 1280x720, 1 = 1600x900, 2 = 1920x1080, 3 = 2560x1440
+        public int ResolutionIndex { get; set; } = 0;
+        public int Fps { get; set; } = 30;
+
         public bool MinimizeOnStart { get; set; } = false;
         public bool MinimizeToTray { get; set; } = false;
 
         public List<Tab> Tabs { get; set; } = new List<Tab>();
+
+        public (int Width, int Height) GetResolution()
+        {
+            return ResolutionIndex switch
+            {
+                0 => (1280, 720),
+                1 => (1600, 900),
+                2 => (1920, 1080),
+                3 => (2560, 1440),
+                _ => (1280, 720)
+            };
+        }
     }
 
     public class Tab
@@ -29,12 +39,5 @@ namespace VrBrowserTestCore
         public bool AudioEnabled { get; set; } = false;
 
         public Guid Tag { get; set; } = Guid.NewGuid();
-
-        [IgnoreDataMember]
-        [JsonIgnore]
-        public ChromiumWebBrowser? Browser { get; set; }
-        [IgnoreDataMember]
-        [JsonIgnore]
-        public bool UrlLoaded { get; set; }
     }
 }

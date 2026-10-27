@@ -5,7 +5,7 @@ namespace VrBrowserTestCore
 {
     internal static class Program
     {
-        private static Form1 mainForm;
+        private static Form1? mainForm;
         /// <summary>
         ///  The main entry point for the application.
         /// </summary>
