@@ -37,6 +37,147 @@ namespace VrBrowserTestCore
     background: transparent !important;
     pointer-events: none;
   }
+  #vr-debug-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: 2147483647;
+    border: 4px solid #00ff66;
+    box-shadow: inset 0 0 0 1px #000, 0 0 0 1px #000, inset 0 0 16px rgba(0, 255, 102, 0.4);
+  }
+  .vr-debug-corner {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    border-color: #00ff66;
+    border-style: solid;
+    pointer-events: none;
+  }
+  .vr-debug-corner.top-left {
+    top: 0;
+    left: 0;
+    border-width: 8px 0 0 8px;
+  }
+  .vr-debug-corner.top-right {
+    top: 0;
+    right: 0;
+    border-width: 8px 8px 0 0;
+  }
+  .vr-debug-corner.bottom-left {
+    bottom: 0;
+    left: 0;
+    border-width: 0 0 8px 8px;
+  }
+  .vr-debug-corner.bottom-right {
+    bottom: 0;
+    right: 0;
+    border-width: 0 8px 8px 0;
+  }
+  .vr-debug-cross-h {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 48px;
+    height: 2px;
+    margin-left: -24px;
+    margin-top: -1px;
+    background-color: #00ff66;
+    box-shadow: 0 0 2px #000;
+    pointer-events: none;
+  }
+  .vr-debug-cross-v {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 2px;
+    height: 48px;
+    margin-left: -1px;
+    margin-top: -24px;
+    background-color: #00ff66;
+    box-shadow: 0 0 2px #000;
+    pointer-events: none;
+  }
+  .vr-debug-cross-dot {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 10px;
+    margin-left: -5px;
+    margin-top: -5px;
+    border: 2px solid #00ff66;
+    border-radius: 50%;
+    background-color: rgba(0, 0, 0, 0.6);
+    box-shadow: 0 0 2px #000;
+    pointer-events: none;
+  }
+  .vr-debug-tick-top {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 2px;
+    height: 20px;
+    margin-left: -1px;
+    background-color: #00ff66;
+    box-shadow: 0 0 2px #000;
+    pointer-events: none;
+  }
+  .vr-debug-tick-bottom {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    height: 20px;
+    margin-left: -1px;
+    background-color: #00ff66;
+    box-shadow: 0 0 2px #000;
+    pointer-events: none;
+  }
+  .vr-debug-tick-left {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 20px;
+    height: 2px;
+    margin-top: -1px;
+    background-color: #00ff66;
+    box-shadow: 0 0 2px #000;
+    pointer-events: none;
+  }
+  .vr-debug-tick-right {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    width: 20px;
+    height: 2px;
+    margin-top: -1px;
+    background-color: #00ff66;
+    box-shadow: 0 0 2px #000;
+    pointer-events: none;
+  }
+  .vr-debug-badge {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.75);
+    color: #00ff66;
+    font-family: Consolas, monospace, sans-serif;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 4px 12px;
+    border: 1px solid #00ff66;
+    border-radius: 4px;
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+    pointer-events: none;
+    white-space: nowrap;
+    text-shadow: 0 0 2px #000;
+  }
 </style>
 <script>
   window.syncTabs = function(tabs) {
@@ -57,6 +198,7 @@ namespace VrBrowserTestCore
         iframe.name = id;
         iframe.className = 'vr-tab-frame';
         iframe.allow = 'autoplay; microphone; camera; encrypted-media; fullscreen';
+        iframe.setAttribute('allowtransparency', 'true');
         iframe.setAttribute('data-url', url);
         iframe.src = url;
         document.body.appendChild(iframe);
@@ -91,6 +233,7 @@ namespace VrBrowserTestCore
       iframe.name = id;
       iframe.className = 'vr-tab-frame';
       iframe.allow = 'autoplay; microphone; camera; encrypted-media; fullscreen';
+      iframe.setAttribute('allowtransparency', 'true');
       document.body.appendChild(iframe);
     }
     if (typeof index === 'number') {
@@ -99,9 +242,34 @@ namespace VrBrowserTestCore
     iframe.setAttribute('data-url', cleanUrl);
     iframe.src = cleanUrl;
   };
+
+  window.setDebugBounds = function(enabled, infoText) {
+    const el = document.getElementById('vr-debug-overlay');
+    if (!el) return;
+    el.style.display = enabled ? 'block' : 'none';
+    if (infoText) {
+      const infoEl = document.getElementById('vr-debug-info');
+      if (infoEl) infoEl.textContent = infoText;
+    }
+  };
 </script>
 </head>
-<body></body>
+<body>
+  <div id=""vr-debug-overlay"">
+    <div class=""vr-debug-corner top-left""></div>
+    <div class=""vr-debug-corner top-right""></div>
+    <div class=""vr-debug-corner bottom-left""></div>
+    <div class=""vr-debug-corner bottom-right""></div>
+    <div class=""vr-debug-tick-top""></div>
+    <div class=""vr-debug-tick-bottom""></div>
+    <div class=""vr-debug-tick-left""></div>
+    <div class=""vr-debug-tick-right""></div>
+    <div class=""vr-debug-cross-h""></div>
+    <div class=""vr-debug-cross-v""></div>
+    <div class=""vr-debug-cross-dot""></div>
+    <div id=""vr-debug-info"" class=""vr-debug-badge"">VR Overlay Bounds</div>
+  </div>
+</body>
 </html>";
 
         private AppSettings ThisAppSettings = new();
@@ -151,6 +319,7 @@ namespace VrBrowserTestCore
             NuFps.Value = Math.Clamp(ThisAppSettings.Fps, (int)NuFps.Minimum, (int)NuFps.Maximum);
             ChMinimizeOnStart.Checked = ThisAppSettings.MinimizeOnStart;
             ChMinimizeToTray.Checked = ThisAppSettings.MinimizeToTray;
+            ChDebugOverlayBounds.Checked = ThisAppSettings.ShowOverlayBounds;
             _isLoadingSettingsUi = false;
 
             if (ThisAppSettings.MinimizeOnStart)
@@ -198,7 +367,7 @@ namespace VrBrowserTestCore
                     ["disable-web-security"] = "1",
                     ["allow-running-insecure-content"] = "1",
                     ["disable-site-isolation-trials"] = "1",
-                    ["disable-features"] = "BlockInsecurePrivateNetworkRequests,IsolateOrigins,site-per-process",
+                    ["disable-features"] = "BlockInsecurePrivateNetworkRequests,IsolateOrigins,site-per-process,ThirdPartyStoragePartitioning,ThirdPartyCookieDeprecation",
                     ["disable-background-networking"] = "1",
                     ["disable-component-update"] = "1",
                     ["disable-sync"] = "1",
@@ -221,6 +390,7 @@ namespace VrBrowserTestCore
 
             IBrowserSettings browserSettings = CefSharp.Core.ObjectFactory.CreateBrowserSettings(autoDispose: false);
             browserSettings.WindowlessFrameRate = Math.Clamp(ThisAppSettings.Fps, 1, 60);
+            browserSettings.BackgroundColor = Cef.ColorSetARGB(0, 0, 0, 0);
 
             _mainBrowser = new ChromiumWebBrowser(
                 address: "about:blank",
@@ -236,7 +406,7 @@ namespace VrBrowserTestCore
 
             _mainBrowser.BrowserInitialized += (s, e) =>
             {
-                _mainBrowser.LoadHtml(ContainerHtml, "https://vrbrowser.local/");
+                SyncTabsToBrowser();
             };
             _mainBrowser.FrameLoadStart += Browser_FrameLoadStart;
             _mainBrowser.FrameLoadEnd += Browser_FrameLoadEnd;
@@ -281,13 +451,23 @@ namespace VrBrowserTestCore
 
         private void Browser_FrameLoadStart(object? sender, FrameLoadStartEventArgs e)
         {
-            if (!e.Frame.IsValid || e.Frame.IsMain)
+            if (!e.Frame.IsValid)
                 return;
+
+            if (e.Frame.IsMain)
+            {
+                var activeTabs = ThisAppSettings.Tabs.Where(t => !string.IsNullOrWhiteSpace(t.Url)).ToList();
+                if (activeTabs.Count == 1)
+                {
+                    ApplyCustomCssToFrame(e.Frame, activeTabs[0].Css);
+                }
+                return;
+            }
 
             var tab = ResolveTabForFrame(e.Frame, out _);
             if (tab != null)
             {
-                ApplyCssAndAudioToFrame(e.Frame, tab);
+                ApplyCustomCssToFrame(e.Frame, tab.Css);
             }
         }
 
@@ -301,9 +481,18 @@ namespace VrBrowserTestCore
                 if (e.Frame.Url != null && e.Frame.Url.StartsWith("https://vrbrowser.local", StringComparison.OrdinalIgnoreCase))
                 {
                     _containerLoaded = true;
-                    UpdateBrowserHostMuteState();
                     SyncTabsToBrowser();
                 }
+
+                UpdateBrowserHostMuteState();
+
+                var activeTabs = ThisAppSettings.Tabs.Where(t => !string.IsNullOrWhiteSpace(t.Url)).ToList();
+                if (activeTabs.Count == 1)
+                {
+                    ApplyCustomCssToFrame(e.Frame, activeTabs[0].Css);
+                }
+
+                UpdateDebugBoundsInBrowser();
                 return;
             }
 
@@ -311,16 +500,52 @@ namespace VrBrowserTestCore
             if (tab != null)
             {
                 UpdateBrowserHostMuteState();
-                ApplyCssAndAudioToFrame(e.Frame, tab);
+                ApplyCustomCssToFrame(e.Frame, tab.Css);
             }
         }
 
         private void SyncTabsToBrowser()
         {
-            if (!_containerLoaded || _mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
+            if (_mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
                 return;
 
-            var payload = ThisAppSettings.Tabs.Select(t => new
+            var activeTabs = ThisAppSettings.Tabs.Where(t => !string.IsNullOrWhiteSpace(t.Url)).ToList();
+
+            if (activeTabs.Count == 0)
+            {
+                _containerLoaded = false;
+                if (_mainBrowser.Address != "about:blank")
+                {
+                    _mainBrowser.Load("about:blank");
+                }
+                UpdateBrowserHostMuteState();
+                return;
+            }
+
+            // If only 1 tab is configured, navigate to it directly to provide full first-party
+            // context for widget alerts (MemeAlerts, DonationAlerts, Twitch chat, etc.) without
+            // cross-origin iframe, WebSocket Origin rejection, or third-party cookie restrictions.
+            if (activeTabs.Count == 1)
+            {
+                _containerLoaded = false;
+                var singleTab = activeTabs[0];
+                if (_mainBrowser.Address != singleTab.Url)
+                {
+                    _mainBrowser.Load(singleTab.Url);
+                }
+                UpdateBrowserHostMuteState();
+                return;
+            }
+
+            // Multi-tab mode: Compose multiple tabs using iframes in ContainerHtml
+            if (!_containerLoaded || !_mainBrowser.Address.StartsWith("https://vrbrowser.local", StringComparison.OrdinalIgnoreCase))
+            {
+                _containerLoaded = false;
+                _mainBrowser.LoadHtml(ContainerHtml, "https://vrbrowser.local/");
+                return;
+            }
+
+            var payload = activeTabs.Select(t => new
             {
                 id = t.Tag.ToString("N"),
                 url = t.Url ?? ""
@@ -333,8 +558,32 @@ namespace VrBrowserTestCore
 
         private void ReloadSingleTabInBrowser(Tab tab)
         {
-            if (!_containerLoaded || _mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
+            if (_mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
                 return;
+
+            var activeTabs = ThisAppSettings.Tabs.Where(t => !string.IsNullOrWhiteSpace(t.Url)).ToList();
+            if (activeTabs.Count == 1 && activeTabs[0].Tag == tab.Tag)
+            {
+                if (!string.IsNullOrWhiteSpace(tab.Url))
+                {
+                    if (_mainBrowser.Address == tab.Url)
+                    {
+                        _mainBrowser.Reload(ignoreCache: true);
+                    }
+                    else
+                    {
+                        _mainBrowser.Load(tab.Url);
+                    }
+                }
+                UpdateBrowserHostMuteState();
+                return;
+            }
+
+            if (!_containerLoaded)
+            {
+                SyncTabsToBrowser();
+                return;
+            }
 
             int index = ThisAppSettings.Tabs.IndexOf(tab);
             string idJson = JsonConvert.SerializeObject(tab.Tag.ToString("N"));
@@ -357,6 +606,17 @@ namespace VrBrowserTestCore
             if (_mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
                 return;
 
+            var activeTabs = ThisAppSettings.Tabs.Where(t => !string.IsNullOrWhiteSpace(t.Url)).ToList();
+            if (activeTabs.Count == 1 && activeTabs[0].Tag == tab.Tag)
+            {
+                var mainFrame = _mainBrowser.GetMainFrame();
+                if (mainFrame != null && mainFrame.IsValid)
+                {
+                    ApplyCustomCssToFrame(mainFrame, tab.Css);
+                }
+                return;
+            }
+
             try
             {
                 var browser = _mainBrowser.GetBrowser();
@@ -371,7 +631,7 @@ namespace VrBrowserTestCore
                         var ownerTab = ResolveTabForFrame(frame, out _);
                         if (ownerTab != null && ownerTab.Tag == tab.Tag)
                         {
-                            ApplyCssAndAudioToFrame(frame, tab);
+                            ApplyCustomCssToFrame(frame, tab.Css);
                         }
                     }
                 }
@@ -379,16 +639,15 @@ namespace VrBrowserTestCore
             catch { }
         }
 
-        private static void ApplyCssAndAudioToFrame(IFrame frame, Tab tab)
+        private static void ApplyCustomCssToFrame(IFrame frame, string? css)
         {
             if (frame == null || !frame.IsValid)
                 return;
 
-            string cssJson = JsonConvert.SerializeObject(tab.Css ?? "");
-            string mutedBool = (!tab.AudioEnabled).ToString().ToLowerInvariant();
+            string cssJson = JsonConvert.SerializeObject(css ?? "");
 
             string script = $@"
-(function(cssText, isMuted) {{
+(function(cssText) {{
   try {{
     var applyStyle = function() {{
       var root = document.head || document.documentElement;
@@ -396,6 +655,7 @@ namespace VrBrowserTestCore
       var styleId = '__vr_overlay_custom_css';
       var style = document.getElementById(styleId);
       if (!style) {{
+        if (!cssText) return;
         style = document.createElement('style');
         style.id = styleId;
         style.type = 'text/css';
@@ -409,43 +669,8 @@ namespace VrBrowserTestCore
     if (document.readyState === 'loading') {{
       document.addEventListener('DOMContentLoaded', applyStyle, {{ once: true }});
     }}
-
-    window.__vrAudioMuted = isMuted;
-    var applyMute = function(rootNode) {{
-      if (!rootNode || !rootNode.querySelectorAll) return;
-      rootNode.querySelectorAll('audio, video').forEach(function(el) {{
-        el.muted = window.__vrAudioMuted;
-      }});
-    }};
-    applyMute(document);
-
-    if (!window.__vrAudioHookInstalled) {{
-      window.__vrAudioHookInstalled = true;
-      var origPlay = HTMLMediaElement.prototype.play;
-      HTMLMediaElement.prototype.play = function() {{
-        if (window.__vrAudioMuted) {{
-          this.muted = true;
-        }}
-        return origPlay.apply(this, arguments);
-      }};
-      if (typeof MutationObserver !== 'undefined' && document.documentElement) {{
-        new MutationObserver(function(mutations) {{
-          for (var i = 0; i < mutations.length; i++) {{
-            var added = mutations[i].addedNodes;
-            for (var j = 0; j < added.length; j++) {{
-              var node = added[j];
-              if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {{
-                node.muted = window.__vrAudioMuted;
-              }} else if (node.querySelectorAll) {{
-                applyMute(node);
-              }}
-            }}
-          }}
-        }}).observe(document.documentElement, {{ childList: true, subtree: true }});
-      }}
-    }}
   }} catch (e) {{}}
-}})({cssJson}, {mutedBool});";
+}})({cssJson});";
 
             frame.ExecuteJavaScriptAsync(script);
         }
@@ -677,6 +902,7 @@ namespace VrBrowserTestCore
                     _mainBrowser.GetBrowserHost()?.Invalidate(PaintElementType.View);
                 }
             }
+            UpdateDebugBoundsInBrowser();
         }
 
         private void LoadPages()
@@ -893,7 +1119,26 @@ namespace VrBrowserTestCore
             }
 
             SaveAppSettings();
-            ReloadSingleTabInBrowser(tab);
+
+            var activeTabs = ThisAppSettings.Tabs.Where(t => !string.IsNullOrWhiteSpace(t.Url)).ToList();
+            if (activeTabs.Count == 1 && activeTabs[0].Tag == tab.Tag)
+            {
+                if (_mainBrowser != null && !_mainBrowser.IsDisposed && _mainBrowser.IsBrowserInitialized)
+                {
+                    if (_mainBrowser.Address == tab.Url)
+                    {
+                        _mainBrowser.Reload(ignoreCache: true);
+                    }
+                    else
+                    {
+                        _mainBrowser.Load(tab.Url);
+                    }
+                }
+            }
+            else
+            {
+                ReloadSingleTabInBrowser(tab);
+            }
         }
 
         private void BuPageDelete_Click(object? sender, EventArgs e)
@@ -938,8 +1183,108 @@ namespace VrBrowserTestCore
                 OpenVR.Overlay.SetOverlayWidthInMeters(OverlayHandle, ThisAppSettings.Size);
                 AssociateOverlayToDevice(OverlayHandle, HmdId);
                 OpenVR.Overlay.SetOverlayCurvature(OverlayHandle, ThisAppSettings.Curvature);
+                UpdateDebugBoundsInBrowser();
             }
             catch { }
+        }
+
+        private void ChDebugOverlayBounds_CheckedChanged(object sender, EventArgs e)
+        {
+            if (_isLoadingSettingsUi) return;
+            ThisAppSettings.ShowOverlayBounds = ChDebugOverlayBounds.Checked;
+            SaveAppSettings();
+            UpdateDebugBoundsInBrowser();
+        }
+
+        private void UpdateDebugBoundsInBrowser()
+        {
+            if (_mainBrowser == null || _mainBrowser.IsDisposed || !_mainBrowser.IsBrowserInitialized)
+                return;
+
+            var (width, height) = ThisAppSettings.GetResolution();
+            bool enabled = ThisAppSettings.ShowOverlayBounds;
+            string info = $"VR Overlay Bounds | {width}x{height} | Size: {ThisAppSettings.Size:F2}m | Offset: {ThisAppSettings.Offset:F2}m | Curve: {ThisAppSettings.Curvature:F2}";
+            string enabledJson = enabled ? "true" : "false";
+            string infoJson = JsonConvert.SerializeObject(info);
+
+            string script = $@"
+(function() {{
+  try {{
+    var overlayId = '__vr_debug_overlay';
+    var styleId = '__vr_debug_overlay_style';
+    var el = document.getElementById(overlayId);
+    var style = document.getElementById(styleId);
+
+    if (!style) {{
+      style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        #vr-debug-overlay, #__vr_debug_overlay {{
+          display: none;
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          box-sizing: border-box !important;
+          pointer-events: none !important;
+          z-index: 2147483647 !important;
+          border: 4px solid #00ff66 !important;
+          box-shadow: inset 0 0 0 1px #000, 0 0 0 1px #000, inset 0 0 16px rgba(0, 255, 102, 0.4) !important;
+        }}
+        .vr-dbg-crn {{ position: absolute !important; width: 32px !important; height: 32px !important; border-color: #00ff66 !important; border-style: solid !important; pointer-events: none !important; }}
+        .vr-dbg-crn.tl {{ top: 0 !important; left: 0 !important; border-width: 8px 0 0 8px !important; }}
+        .vr-dbg-crn.tr {{ top: 0 !important; right: 0 !important; border-width: 8px 8px 0 0 !important; }}
+        .vr-dbg-crn.bl {{ bottom: 0 !important; left: 0 !important; border-width: 0 0 8px 8px !important; }}
+        .vr-dbg-crn.br {{ bottom: 0 !important; right: 0 !important; border-width: 0 8px 8px 0 !important; }}
+        .vr-dbg-ch {{ position: absolute !important; top: 50% !important; left: 50% !important; width: 48px !important; height: 2px !important; margin-left: -24px !important; margin-top: -1px !important; background-color: #00ff66 !important; box-shadow: 0 0 2px #000 !important; pointer-events: none !important; }}
+        .vr-dbg-cv {{ position: absolute !important; top: 50% !important; left: 50% !important; width: 2px !important; height: 48px !important; margin-left: -1px !important; margin-top: -24px !important; background-color: #00ff66 !important; box-shadow: 0 0 2px #000 !important; pointer-events: none !important; }}
+        .vr-dbg-dot {{ position: absolute !important; top: 50% !important; left: 50% !important; width: 10px !important; height: 10px !important; margin-left: -5px !important; margin-top: -5px !important; border: 2px solid #00ff66 !important; border-radius: 50% !important; background-color: rgba(0, 0, 0, 0.6) !important; box-shadow: 0 0 2px #000 !important; pointer-events: none !important; }}
+        .vr-dbg-tt {{ position: absolute !important; top: 0 !important; left: 50% !important; width: 2px !important; height: 20px !important; margin-left: -1px !important; background-color: #00ff66 !important; box-shadow: 0 0 2px #000 !important; pointer-events: none !important; }}
+        .vr-dbg-tb {{ position: absolute !important; bottom: 0 !important; left: 50% !important; width: 2px !important; height: 20px !important; margin-left: -1px !important; background-color: #00ff66 !important; box-shadow: 0 0 2px #000 !important; pointer-events: none !important; }}
+        .vr-dbg-tl {{ position: absolute !important; top: 50% !important; left: 0 !important; width: 20px !important; height: 2px !important; margin-top: -1px !important; background-color: #00ff66 !important; box-shadow: 0 0 2px #000 !important; pointer-events: none !important; }}
+        .vr-dbg-tr {{ position: absolute !important; top: 50% !important; right: 0 !important; width: 20px !important; height: 2px !important; margin-top: -1px !important; background-color: #00ff66 !important; box-shadow: 0 0 2px #000 !important; pointer-events: none !important; }}
+        .vr-dbg-badge {{ position: absolute !important; top: 10px !important; left: 50% !important; transform: translateX(-50%) !important; background: rgba(0, 0, 0, 0.75) !important; color: #00ff66 !important; font-family: Consolas, monospace, sans-serif !important; font-size: 14px !important; font-weight: bold !important; padding: 4px 12px !important; border: 1px solid #00ff66 !important; border-radius: 4px !important; box-shadow: 0 0 6px rgba(0, 0, 0, 0.8) !important; pointer-events: none !important; white-space: nowrap !important; text-shadow: 0 0 2px #000 !important; }}
+      `;
+      (document.head || document.documentElement).appendChild(style);
+    }}
+
+    if (!el) {{
+      el = document.createElement('div');
+      el.id = overlayId;
+      el.innerHTML = `
+        <div class=""vr-dbg-crn tl""></div>
+        <div class=""vr-dbg-crn tr""></div>
+        <div class=""vr-dbg-crn bl""></div>
+        <div class=""vr-dbg-crn br""></div>
+        <div class=""vr-dbg-tt""></div>
+        <div class=""vr-dbg-tb""></div>
+        <div class=""vr-dbg-tl""></div>
+        <div class=""vr-dbg-tr""></div>
+        <div class=""vr-dbg-ch""></div>
+        <div class=""vr-dbg-cv""></div>
+        <div class=""vr-dbg-dot""></div>
+        <div id=""__vr_debug_info"" class=""vr-dbg-badge""></div>
+      `;
+      (document.body || document.documentElement).appendChild(el);
+    }}
+
+    el.style.display = {enabledJson} ? 'block' : 'none';
+    var infoEl = document.getElementById('__vr_debug_info');
+    if (infoEl) infoEl.textContent = {infoJson};
+    if (document.body) document.body.offsetHeight;
+    if (window.setDebugBounds) window.setDebugBounds({enabledJson}, {infoJson});
+  }} catch (e) {{}}
+}})();";
+
+            _mainBrowser.EvaluateScriptAsync(script).ContinueWith(_ =>
+            {
+                try
+                {
+                    _mainBrowser?.GetBrowserHost()?.Invalidate(PaintElementType.View);
+                }
+                catch { }
+            }, TaskScheduler.Default);
         }
 
         private void ChMinimizeOnStart_CheckedChanged(object sender, EventArgs e)

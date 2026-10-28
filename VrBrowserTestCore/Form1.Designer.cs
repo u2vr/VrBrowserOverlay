@@ -50,6 +50,7 @@ namespace VrBrowserTestCore
 			TaVrSettings = new TabPage();
 			ChMinimizeToTray = new CheckBox();
 			ChMinimizeOnStart = new CheckBox();
+			ChDebugOverlayBounds = new CheckBox();
 			BuApplyVrSettings = new Button();
 			label2 = new Label();
 			TaAbout = new TabPage();
@@ -256,6 +257,7 @@ namespace VrBrowserTestCore
 			TaVrSettings.Controls.Add(LaResolution);
 			TaVrSettings.Controls.Add(ChMinimizeToTray);
 			TaVrSettings.Controls.Add(ChMinimizeOnStart);
+			TaVrSettings.Controls.Add(ChDebugOverlayBounds);
 			TaVrSettings.Controls.Add(BuApplyVrSettings);
 			TaVrSettings.Controls.Add(label2);
 			TaVrSettings.Controls.Add(NuSize);
@@ -283,6 +285,17 @@ namespace VrBrowserTestCore
 			ChMinimizeToTray.Text = "Minimize to Tray";
 			ChMinimizeToTray.UseVisualStyleBackColor = true;
 			ChMinimizeToTray.CheckedChanged += ChMinimizeToTray_CheckedChanged;
+			// 
+			// ChDebugOverlayBounds
+			// 
+			ChDebugOverlayBounds.AutoSize = true;
+			ChDebugOverlayBounds.Location = new Point(6, 264);
+			ChDebugOverlayBounds.Name = "ChDebugOverlayBounds";
+			ChDebugOverlayBounds.Size = new Size(185, 19);
+			ChDebugOverlayBounds.TabIndex = 21;
+			ChDebugOverlayBounds.Text = "Draw overlay bounds (Debug)";
+			ChDebugOverlayBounds.UseVisualStyleBackColor = true;
+			ChDebugOverlayBounds.CheckedChanged += ChDebugOverlayBounds_CheckedChanged;
 			// 
 			// ChMinimizeOnStart
 			// 
@@ -472,6 +485,7 @@ namespace VrBrowserTestCore
         private Button BuApplyVrSettings;
         private CheckBox ChMinimizeToTray;
         private CheckBox ChMinimizeOnStart;
+        private CheckBox ChDebugOverlayBounds;
         private NotifyIcon NoMain;
     }
 }

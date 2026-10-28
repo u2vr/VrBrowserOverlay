@@ -16,6 +16,7 @@ namespace VrBrowserTestCore
 
         public bool MinimizeOnStart { get; set; } = false;
         public bool MinimizeToTray { get; set; } = false;
+        public bool ShowOverlayBounds { get; set; } = false;
 
         public List<Tab> Tabs { get; set; } = new List<Tab>();
 
